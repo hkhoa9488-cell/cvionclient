@@ -5,15 +5,6 @@ on:
     branches: [ "**" ]
   pull_request:
   workflow_dispatch:
-    inputs:
-      build_full_server:
-        description: "Clone Paper 26.2 upstream & build full Paperclip server JAR (slower)"
-        required: false
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
 
 jobs:
   build:
@@ -53,30 +44,61 @@ jobs:
         with:
           gradle-version: 8.14.3
 
-      - name: Verify patch structure & run Gradle build + tests
+      - name: Build & test NewTimeSMP 1.0.0 modules
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
+          sed -i 's/\r$//' scripts/*.sh
           chmod +x scripts/*.sh
           ./scripts/verify-patches.sh
-          gradle build --no-daemon
+          gradle build --no-daemon --stacktrace
 
-      - name: Collect NewTimeSMP 1.0.0 JAR artifacts
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
           mkdir -p dist
           find newtimesmp-*/build/libs -maxdepth 1 -name "*.jar" ! -name "*-sources.jar" -exec cp {} dist/ \;
-          ls -lh dist/
 
-      - name: Build full Paper 26.2 server JAR (optional via workflow_dispatch)
-        if: ${{ github.event.inputs.build_full_server == 'true' }}
+      - name: Build runnable NewTimeSMP Server JAR (~60MB)
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          ./scripts/build-slim.sh
+          git config --global user.name "NewTimeSMP CI"
+          git config --global user.email "ci@newtimesmp.local"
 
-      - name: Upload NewTimeSMP 1.0.0 JARs
+          UPSTREAM_URL="https://github.com/PaperMC/Paper.git"
+          if git ls-remote --heads "$UPSTREAM_URL" "ver/26.2" | grep -q "ver/26.2"; then
+            TARGET_BRANCH="ver/26.2"
+          else
+            TARGET_BRANCH="main"
+          fi
+          echo "Using Paper upstream branch: $TARGET_BRANCH"
+
+          rm -rf .upstream-paper
+          git clone --depth 1 --branch "$TARGET_BRANCH" "$UPSTREAM_URL" .upstream-paper
+
+          cd .upstream-paper
+          chmod +x gradlew
+          ./gradlew applyPatches --no-daemon
+          ./gradlew createMojmapBundlerJar --no-daemon || ./gradlew createPaperclipJar --no-daemon
+          cd ..
+
+          SERVER_JAR=$(find .upstream-paper -path "*/build/libs/*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" | head -n 1)
+          if [ -z "$SERVER_JAR" ]; then
+            echo "Error: Failed to locate compiled Paper server JAR!"
+            exit 1
+          fi
+
+          cp "$SERVER_JAR" "dist/NewTimeSMP-1.0.0-mc26.2.jar"
+          rm -rf .upstream-paper/work .upstream-paper/.gradle build */build
+          ls -lh dist/
+
+      - name: Upload NewTimeSMP Server JAR (~60MB)
         uses: actions/upload-artifact@v4
         with:
-          name: NewTimeSMP-1.0.0-mc26.2-jar
+          name: NewTimeSMP-1.0.0-mc26.2-server
+          path: ${{ env.PROJECT_DIR }}/dist/NewTimeSMP-1.0.0-mc26.2.jar
+          if-no-files-found: error
+
+      - name: Upload all NewTimeSMP JARs (Server + 7 Modules)
+        uses: actions/upload-artifact@v4
+        with:
+          name: NewTimeSMP-1.0.0-mc26.2-all-jars
           path: ${{ env.PROJECT_DIR }}/dist/*.jar
           if-no-files-found: error
           
