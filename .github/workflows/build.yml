@@ -22,15 +22,12 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Extract NewTimeSMP zip (if present) & locate project root
+      - name: Extract NewTimeSMP.zip (if present) & locate project root
         run: |
-          for archive in NewTimeSMP-1.0.0-mc26.2-slim.zip NewTimeSMP-1.0.0-mc26.2.zip project.zip; do
-            if [ -f "$archive" ]; then
-              echo "Found $archive, extracting..."
-              unzip -o "$archive"
-              break
-            fi
-          done
+          if [ -f "NewTimeSMP.zip" ]; then
+            echo "Found NewTimeSMP.zip, extracting..."
+            unzip -o NewTimeSMP.zip
+          fi
 
           if [ -f "settings.gradle.kts" ]; then
             echo "PROJECT_DIR=." >> "$GITHUB_ENV"
