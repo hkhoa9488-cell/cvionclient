@@ -33,17 +33,17 @@ jobs:
             echo "PROJECT_DIR=$FOUND_DIR" >> "$GITHUB_ENV"
           fi
 
-      - name: Set up JDK 21 (for NewTimeSMP modules)
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Set up JDK 25 (default for Paper 26.2)
+      - name: Set up JDK 25 (for Paper 26.2)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '25'
+
+      - name: Set up JDK 21 (default for Gradle 8.14.3 & modules)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
 
       - name: Set up Gradle 8.14.3
         uses: gradle/actions/setup-gradle@v4
@@ -53,6 +53,7 @@ jobs:
       - name: Build & test NewTimeSMP 1.0.0 modules
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
+          java -version
           if ls scripts/*.sh 1> /dev/null 2>&1; then
             sed -i 's/\r$//' scripts/*.sh
             chmod +x scripts/*.sh
@@ -67,6 +68,12 @@ jobs:
       - name: Build runnable NewTimeSMP Server JAR (~60MB)
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
+          if [ -n "$JAVA_HOME_25_X64" ]; then
+            export JAVA_HOME="$JAVA_HOME_25_X64"
+            export PATH="$JAVA_HOME/bin:$PATH"
+          fi
+          java -version
+
           git config --global user.name "NewTimeSMP CI"
           git config --global user.email "ci@newtimesmp.local"
 
