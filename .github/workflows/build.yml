@@ -66,6 +66,13 @@ jobs:
           find newtimesmp-*/build/libs -maxdepth 1 -name "*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" -exec cp {} dist/ \;
           ls -lh dist/
 
+          echo "=== Inspecting 7 NewTimeSMP Module Contents ==="
+          for jar in dist/newtimesmp-*.jar; do
+            [ -f "$jar" ] || continue
+            echo "--- $jar ---"
+            unzip -l "$jar" | grep -E "plugin\.yml|MANIFEST\.MF|\.class$" || true
+          done
+
       - name: Build runnable NewTimeSMP Server JAR (~60MB)
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -121,43 +128,43 @@ jobs:
             exit 1
           fi
 
-          echo "Step 2/3: Applying NewTimeSMP custom patches..."
-          PATCH_FILES=$(find ../patches -type f -name "*.patch" | sort)
+          echo "Step 2/3: Checking & applying NewTimeSMP custom patches..."
+          find ../patches ../scripts -maxdepth 4 2>/dev/null || true
+          PATCH_FILES=$(find ../patches -type f \( -name "*.patch" -o -name "*.diff" \) 2>/dev/null | sort)
           if [ -z "$PATCH_FILES" ]; then
-            echo "Error: No .patch files found in ../patches!"
-            exit 1
-          fi
+            echo "No .patch/.diff files found in ../patches. Proceeding with bundled modules..."
+          else
+            for p in $PATCH_FILES; do
+              ABS_PATCH=$(realpath "$p")
+              echo "Applying patch: $p"
+              APPLIED=false
+              for dir in "" "paper-server" "paper-server/src/minecraft/java" "paper-server/src/main/java" "paper-api/src/main/java"; do
+                if [ -z "$dir" ]; then
+                  if git apply --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
+                    git apply --3way --ignore-whitespace "$ABS_PATCH"
+                    APPLIED=true
+                    echo " -> Applied at repository root"
+                    break
+                  fi
+                elif [ -d "$dir" ]; then
+                  if git apply --directory="$dir" --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
+                    git apply --directory="$dir" --3way --ignore-whitespace "$ABS_PATCH"
+                    APPLIED=true
+                    echo " -> Applied into $dir"
+                    break
+                  fi
+                fi
+              done
 
-          for p in $PATCH_FILES; do
-            ABS_PATCH=$(realpath "$p")
-            echo "Applying patch: $p"
-            APPLIED=false
-            for dir in "" "paper-server" "paper-server/src/minecraft/java" "paper-server/src/main/java" "paper-api/src/main/java"; do
-              if [ -z "$dir" ]; then
-                if git apply --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
-                  git apply --3way --ignore-whitespace "$ABS_PATCH"
-                  APPLIED=true
-                  echo " -> Applied at repository root"
-                  break
-                fi
-              elif [ -d "$dir" ]; then
-                if git apply --directory="$dir" --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
-                  git apply --directory="$dir" --3way --ignore-whitespace "$ABS_PATCH"
-                  APPLIED=true
-                  echo " -> Applied into $dir"
-                  break
-                fi
+              if [ "$APPLIED" = false ]; then
+                echo "================ PATCH APPLY FAILURE ================"
+                echo "Failed to apply patch: $p"
+                head -n 25 "$ABS_PATCH"
+                git apply --check --ignore-whitespace "$ABS_PATCH" || true
+                exit 1
               fi
             done
-
-            if [ "$APPLIED" = false ]; then
-              echo "================ PATCH APPLY FAILURE ================"
-              echo "Failed to apply patch: $p"
-              head -n 25 "$ABS_PATCH"
-              git apply --check --ignore-whitespace "$ABS_PATCH" || true
-              exit 1
-            fi
-          done
+          fi
 
           echo "Injecting 7 NewTimeSMP modules via local Maven..."
           printf '\nrepositories {\n    maven { url = uri(file("${rootProject.projectDir}/../.local-maven")) }\n}\ndependencies {\n%b}\n' "$DEPS_KTS" >> paper-server/build.gradle.kts
