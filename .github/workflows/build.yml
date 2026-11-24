@@ -106,9 +106,16 @@ jobs:
           org.gradle.workers.max=2
           EOF
 
-          echo "Applying Paper patches & building Paperclip JAR..."
-          if ! ./gradlew applyPatches createPaperclipJar --no-daemon --max-workers=2 --stacktrace 2>&1 | tee /tmp/paper-build.log; then
-            echo "================ EXACT FAILURE REASON ================"
+          echo "Step 1/2: Decompiling Minecraft & applying Paper patches..."
+          if ! ./gradlew applyPatches --no-daemon --max-workers=2 --stacktrace 2>&1 | tee /tmp/paper-build.log; then
+            echo "================ EXACT FAILURE REASON (applyPatches) ================"
+            grep -B 15 -A 10 "FAILURE: Build failed with an exception." /tmp/paper-build.log || tail -n 80 /tmp/paper-build.log
+            exit 1
+          fi
+
+          echo "Step 2/2: Building Paperclip Server JAR..."
+          if ! ./gradlew createPaperclipJar --no-daemon --max-workers=2 --stacktrace 2>&1 | tee -a /tmp/paper-build.log; then
+            echo "================ EXACT FAILURE REASON (createPaperclipJar) ================"
             grep -B 15 -A 10 "FAILURE: Build failed with an exception." /tmp/paper-build.log || tail -n 80 /tmp/paper-build.log
             exit 1
           fi
