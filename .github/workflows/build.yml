@@ -75,14 +75,18 @@ jobs:
           cd .upstream-paper
           chmod +x gradlew
           ./gradlew applyPatches --no-daemon
-          ./gradlew createMojmapBundlerJar --no-daemon || ./gradlew createPaperclipJar --no-daemon
+          ./gradlew createMojmapPaperclipJar --no-daemon || ./gradlew createMojmapBundlerJar --no-daemon
           cd ..
 
-          SERVER_JAR=$(find .upstream-paper -path "*/build/libs/*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" | head -n 1)
+          SERVER_JAR=$(find .upstream-paper -path "*/build/libs/*-paperclip*.jar" -o -path "*/build/libs/*-bundler*.jar" | head -n 1)
           if [ -z "$SERVER_JAR" ]; then
-            echo "Error: Failed to locate compiled Paper server JAR!"
+            echo "Error: Failed to locate Paperclip/Bundler server JAR!"
+            find .upstream-paper -path "*/build/libs/*.jar"
             exit 1
           fi
+
+          echo "Selected runnable JAR: $SERVER_JAR"
+          unzip -p "$SERVER_JAR" META-INF/MANIFEST.MF | grep -E "Main-Class|Bundler-Format"
 
           cp "$SERVER_JAR" "dist/NewTimeSMP-1.0.0-mc26.2.jar"
           rm -rf .upstream-paper/work .upstream-paper/.gradle build */build
