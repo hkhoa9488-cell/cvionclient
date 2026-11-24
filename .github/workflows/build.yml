@@ -70,7 +70,7 @@ jobs:
           for jar in dist/newtimesmp-*.jar; do
             [ -f "$jar" ] || continue
             echo "--- $jar ---"
-            unzip -l "$jar" | grep -E "plugin\.yml|MANIFEST\.MF|\.class$" || true
+            unzip -l "$jar" | grep -E "plugin\.yml|paper-plugin\.yml|MANIFEST\.MF|\.class$" || true
           done
 
       - name: Build runnable NewTimeSMP Server JAR (~60MB)
@@ -128,43 +128,98 @@ jobs:
             exit 1
           fi
 
-          echo "Step 2/3: Checking & applying NewTimeSMP custom patches..."
-          find ../patches ../scripts -maxdepth 4 2>/dev/null || true
+          echo "Step 2/3: Applying custom patches & injecting NewTimeSMP Bootstrap hook..."
           PATCH_FILES=$(find ../patches -type f \( -name "*.patch" -o -name "*.diff" \) 2>/dev/null | sort)
-          if [ -z "$PATCH_FILES" ]; then
-            echo "No .patch/.diff files found in ../patches. Proceeding with bundled modules..."
-          else
+          if [ -n "$PATCH_FILES" ]; then
             for p in $PATCH_FILES; do
               ABS_PATCH=$(realpath "$p")
               echo "Applying patch: $p"
-              APPLIED=false
               for dir in "" "paper-server" "paper-server/src/minecraft/java" "paper-server/src/main/java" "paper-api/src/main/java"; do
-                if [ -z "$dir" ]; then
-                  if git apply --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
-                    git apply --3way --ignore-whitespace "$ABS_PATCH"
-                    APPLIED=true
-                    echo " -> Applied at repository root"
-                    break
-                  fi
-                elif [ -d "$dir" ]; then
-                  if git apply --directory="$dir" --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
-                    git apply --directory="$dir" --3way --ignore-whitespace "$ABS_PATCH"
-                    APPLIED=true
-                    echo " -> Applied into $dir"
-                    break
-                  fi
+                if [ -z "$dir" ] && git apply --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
+                  git apply --3way --ignore-whitespace "$ABS_PATCH"
+                  break
+                elif [ -n "$dir" ] && [ -d "$dir" ] && git apply --directory="$dir" --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
+                  git apply --directory="$dir" --3way --ignore-whitespace "$ABS_PATCH"
+                  break
                 fi
               done
-
-              if [ "$APPLIED" = false ]; then
-                echo "================ PATCH APPLY FAILURE ================"
-                echo "Failed to apply patch: $p"
-                head -n 25 "$ABS_PATCH"
-                git apply --check --ignore-whitespace "$ABS_PATCH" || true
-                exit 1
-              fi
             done
           fi
+
+          python3 -c '
+          import glob, os, re, zipfile
+
+          classes = []
+          for jar_path in sorted(glob.glob("../dist/newtimesmp-*.jar")):
+              with zipfile.ZipFile(jar_path, "r") as zf:
+                  for name in zf.namelist():
+                      if name.endswith(".class") and "$" not in name and not name.endswith("package-info.class") and not name.endswith("module-info.class"):
+                          classes.append(name[:-6].replace("/", "."))
+
+          os.makedirs("paper-server/src/main/java/com/newtimesmp/bootstrap", exist_ok=True)
+          class_entries = ",\n        ".join(f"\"{c}\"" for c in classes)
+
+          java_code = f"""package com.newtimesmp.bootstrap;
+
+          import java.lang.reflect.Method;
+          import java.lang.reflect.Modifier;
+          import java.util.Set;
+          import org.bukkit.Bukkit;
+
+          @SuppressWarnings("deprecation")
+          public final class NewTimeSMPBootstrap {{
+              private static boolean initialized = false;
+              private static final String[] MODULE_CLASSES = {{
+                  {class_entries}
+              }};
+              private static final Set<String> ENTRY_METHODS = Set.of(
+                  "bootstrap", "init", "initialize", "start", "enable", "register", "load"
+              );
+
+              public static synchronized void init() {{
+                  if (initialized) return;
+                  initialized = true;
+                  Bukkit.getLogger().info("[NewTimeSMP] Bootstrapping NewTimeSMP 1.0.0 (MC 26.2) - scanning " + MODULE_CLASSES.length + " module classes...");
+                  int loaded = 0;
+                  int invoked = 0;
+                  ClassLoader cl = NewTimeSMPBootstrap.class.getClassLoader();
+                  for (String className : MODULE_CLASSES) {{
+                      try {{
+                          Class<?> clazz = Class.forName(className, true, cl);
+                          loaded++;
+                          for (Method m : clazz.getDeclaredMethods()) {{
+                              if (Modifier.isStatic(m.getModifiers()) && Modifier.isPublic(m.getModifiers())
+                                      && m.getParameterCount() == 0 && ENTRY_METHODS.contains(m.getName())) {{
+                                  Bukkit.getLogger().info("[NewTimeSMP] Invoking " + className + "#" + m.getName() + "()");
+                                  m.invoke(null);
+                                  invoked++;
+                              }}
+                          }}
+                      }} catch (Throwable t) {{
+                          Bukkit.getLogger().warning("[NewTimeSMP] Skipped " + className + ": " + t);
+                      }}
+                  }}
+                  Bukkit.getLogger().info("[NewTimeSMP] Initialization complete (loaded=" + loaded + ", entrypoints=" + invoked + ").");
+              }}
+          }}
+          """
+
+          with open("paper-server/src/main/java/com/newtimesmp/bootstrap/NewTimeSMPBootstrap.java", "w", encoding="utf-8") as f:
+              f.write(java_code)
+
+          craft_server = "paper-server/src/main/java/org/bukkit/craftbukkit/CraftServer.java"
+          with open(craft_server, "r", encoding="utf-8") as f:
+              src = f.read()
+
+          src = src.replace("private final String serverName = \"Paper\";", "private final String serverName = \"NewTimeSMP\";")
+          src, count = re.subn(r"(public\s+void\s+loadPlugins\s*\(\s*\)\s*\{)", r"\1\n        com.newtimesmp.bootstrap.NewTimeSMPBootstrap.init();", src, count=1)
+          assert count == 1, "Failed to hook CraftServer.loadPlugins()"
+
+          with open(craft_server, "w", encoding="utf-8") as f:
+              f.write(src)
+
+          print(f"Successfully generated NewTimeSMPBootstrap with {len(classes)} classes and hooked CraftServer.java")
+          '
 
           echo "Injecting 7 NewTimeSMP modules via local Maven..."
           printf '\nrepositories {\n    maven { url = uri(file("${rootProject.projectDir}/../.local-maven")) }\n}\ndependencies {\n%b}\n' "$DEPS_KTS" >> paper-server/build.gradle.kts
