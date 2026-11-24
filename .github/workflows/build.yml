@@ -70,8 +70,13 @@ jobs:
         run: |
           if [ -n "$JAVA_HOME_25_X64" ]; then
             export JAVA_HOME="$JAVA_HOME_25_X64"
-            export PATH="$JAVA_HOME/bin:$PATH"
+          else
+            JDK25_DIR=$(find /opt/hostedtoolcache -maxdepth 4 -type d -name "25.*" | head -n 1)
+            if [ -n "$JDK25_DIR" ]; then
+              export JAVA_HOME="$JDK25_DIR/x64"
+            fi
           fi
+          export PATH="$JAVA_HOME/bin:$PATH"
           java -version
 
           git config --global user.name "NewTimeSMP CI"
@@ -92,33 +97,55 @@ jobs:
           chmod +x gradlew
 
           TASKS=$(./gradlew tasks --all --no-daemon)
-          if echo "$TASKS" | grep -q "createMojmapPaperclipJar"; then
-            BUILD_TASK="createMojmapPaperclipJar"
-          elif echo "$TASKS" | grep -q "createMojmapBundlerJar"; then
-            BUILD_TASK="createMojmapBundlerJar"
-          elif echo "$TASKS" | grep -q "createReobfPaperclipJar"; then
-            BUILD_TASK="createReobfPaperclipJar"
+          if echo "$TASKS" | grep -qE '(^|:)createPaperclipJar\b'; then
+            BUILD_TASK="createPaperclipJar"
+          elif echo "$TASKS" | grep -qE '(^|:)createBundlerJar\b'; then
+            BUILD_TASK="createBundlerJar"
           else
-            BUILD_TASK="createReobfBundlerJar"
+            BUILD_TASK=$(echo "$TASKS" | grep -oE '[a-zA-Z0-9:_-]*(PaperclipJar|BundlerJar)' | head -n 1)
+          fi
+
+          if [ -z "$BUILD_TASK" ]; then
+            BUILD_TASK="createPaperclipJar"
           fi
 
           echo "Executing Paper build task: $BUILD_TASK"
           ./gradlew "$BUILD_TASK" --no-daemon --stacktrace
           cd ..
 
-          SERVER_JAR=$(find .upstream-paper -path "*/build/libs/*.jar" \( -name "*paperclip*.jar" -o -name "*bundler*.jar" \) ! -name "*-sources.jar" ! -name "*-javadoc.jar" | head -n 1)
+          SERVER_JAR=""
+          for jar in $(find .upstream-paper -path "*/build/libs/*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar"); do
+            MANIFEST=$(unzip -p "$jar" META-INF/MANIFEST.MF 2>/dev/null || true)
+            if echo "$MANIFEST" | grep -qE "io\.papermc\.paperclip\.Main|Bundler-Format"; then
+              SERVER_JAR="$jar"
+              break
+            fi
+          done
+
           if [ -z "$SERVER_JAR" ]; then
-            echo "Error: Failed to locate Paperclip/Bundler server JAR!"
+            SERVER_JAR=$(find .upstream-paper -path "*/build/libs/*.jar" \( -name "*paperclip*.jar" -o -name "*bundler*.jar" \) ! -name "*-sources.jar" ! -name "*-javadoc.jar" | head -n 1)
+          fi
+
+          if [ -z "$SERVER_JAR" ]; then
+            echo "Error: Failed to locate runnable Paperclip/Bundler server JAR!"
             find .upstream-paper -path "*/build/libs/*.jar"
             exit 1
           fi
 
           echo "Selected runnable JAR: $SERVER_JAR"
-          if ! unzip -p "$SERVER_JAR" META-INF/MANIFEST.MF | grep -q "Main-Class:"; then
-            echo "Error: Selected JAR does not contain a Main-Class attribute!"
+          MANIFEST_CONTENT=$(unzip -p "$SERVER_JAR" META-INF/MANIFEST.MF)
+          echo "$MANIFEST_CONTENT" | grep -E "Main-Class|Bundler-Format"
+
+          if echo "$MANIFEST_CONTENT" | grep -q "org.bukkit.craftbukkit.Main"; then
+            echo "Error: Selected JAR is unbundled craftbukkit JAR and cannot run standalone!"
             exit 1
           fi
-          unzip -p "$SERVER_JAR" META-INF/MANIFEST.MF | grep -E "Main-Class|Bundler-Format"
+
+          JAR_SIZE=$(stat -c%s "$SERVER_JAR")
+          if [ "$JAR_SIZE" -lt 35000000 ]; then
+            echo "Error: Server JAR is too small ($JAR_SIZE bytes), expected > 35MB Paperclip/Bundler JAR!"
+            exit 1
+          fi
 
           cp "$SERVER_JAR" "dist/NewTimeSMP-1.0.0-mc26.2.jar"
           rm -rf .upstream-paper/work .upstream-paper/.gradle build */build
