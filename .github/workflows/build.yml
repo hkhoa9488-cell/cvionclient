@@ -85,6 +85,19 @@ jobs:
           git config --global user.name "NewTimeSMP CI"
           git config --global user.email "ci@newtimesmp.local"
 
+          rm -rf .local-maven
+          mkdir -p .local-maven
+          DEPS_KTS=""
+          for jar in dist/*.jar; do
+            [ -f "$jar" ] || continue
+            MOD_NAME=$(basename "$jar" .jar)
+            MOD_DIR=".local-maven/com/newtimesmp/${MOD_NAME}/1.0.0"
+            mkdir -p "$MOD_DIR"
+            cp "$jar" "${MOD_DIR}/${MOD_NAME}-1.0.0.jar"
+            printf '<project><modelVersion>4.0.0</modelVersion><groupId>com.newtimesmp</groupId><artifactId>%s</artifactId><version>1.0.0</version></project>\n' "$MOD_NAME" > "${MOD_DIR}/${MOD_NAME}-1.0.0.pom"
+            DEPS_KTS="${DEPS_KTS}    runtimeOnly(\"com.newtimesmp:${MOD_NAME}:1.0.0\")\n"
+          done
+
           UPSTREAM_URL="https://github.com/PaperMC/Paper.git"
           if git ls-remote --heads "$UPSTREAM_URL" "ver/26.2" | grep -q "ver/26.2"; then
             TARGET_BRANCH="ver/26.2"
@@ -108,8 +121,8 @@ jobs:
             exit 1
           fi
 
-          echo "Injecting 7 NewTimeSMP modules into paper-server..."
-          printf '\ndependencies {\n    runtimeOnly(fileTree(rootProject.file("../dist")) { include("*.jar"); exclude("NewTimeSMP-1.0.0*.jar") })\n}\n' >> paper-server/build.gradle.kts
+          echo "Injecting 7 NewTimeSMP modules via local Maven..."
+          printf '\nrepositories {\n    maven { url = uri(file("${rootProject.projectDir}/../.local-maven")) }\n}\ndependencies {\n%b}\n' "$DEPS_KTS" >> paper-server/build.gradle.kts
 
           echo "Step 2/2: Building bundled Paperclip Server JAR..."
           if ! ./gradlew createPaperclipJar --no-daemon --max-workers=2 --stacktrace 2>&1 | tee -a /tmp/paper-build.log; then
@@ -138,18 +151,16 @@ jobs:
             exit 1
           fi
 
-          echo "Selected runnable JAR: $SERVER_JAR"
-          echo "=== Embedded NewTimeSMP modules check ==="
-          unzip -p "$SERVER_JAR" META-INF/libraries.list | grep "newtimesmp" || true
-
-          JAR_SIZE=$(stat -c%s "$SERVER_JAR")
-          if [ "$JAR_SIZE" -lt 35000000 ]; then
-            echo "Error: Server JAR is too small ($JAR_SIZE bytes)!"
+          echo "=== Verifying embedded NewTimeSMP modules ==="
+          EMBEDDED_COUNT=$(unzip -p "$SERVER_JAR" META-INF/libraries.list | grep -c "com/newtimesmp" || true)
+          unzip -p "$SERVER_JAR" META-INF/libraries.list | grep "com/newtimesmp" || true
+          if [ "$EMBEDDED_COUNT" -lt 7 ]; then
+            echo "Error: Expected 7 embedded modules in libraries.list, found $EMBEDDED_COUNT!"
             exit 1
           fi
 
           cp "$SERVER_JAR" "dist/NewTimeSMP-1.0.0-mc26.2.jar"
-          rm -rf .upstream-paper/work .upstream-paper/.gradle build */build
+          rm -rf .upstream-paper/work .upstream-paper/.gradle .local-maven build */build
           ls -lh dist/
 
       - name: Upload NewTimeSMP Server JAR (~60MB)
