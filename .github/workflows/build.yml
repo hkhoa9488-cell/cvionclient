@@ -123,7 +123,7 @@ jobs:
 
           echo "Step 2/3: Injecting NewTimeSMP Bootstrap hook..."
           python3 -c '
-          import glob, os, re, zipfile
+          import glob, os, zipfile
 
           classes = []
           for jar_path in sorted(glob.glob("../dist/newtimesmp-*.jar")):
@@ -187,9 +187,12 @@ jobs:
           with open(craft_server, "r", encoding="utf-8") as f:
               src = f.read()
 
-          src, name_count = re.subn(r"(public\s+String\s+getName\s*\(\s*\)\s*\{)", r"\1\n        if (true) return \"NewTimeSMP\";", src, count=1)
-          src, hook_count = re.subn(r"(public\s+void\s+loadPlugins\s*\(\s*\)\s*\{)", r"\1\n        com.newtimesmp.bootstrap.NewTimeSMPBootstrap.init();", src, count=1)
-          assert name_count == 1 and hook_count == 1, f"Hook failed: name={name_count}, hook={hook_count}"
+          sig_name = "public String getName() {"
+          sig_load = "public void loadPlugins() {"
+          assert sig_name in src and sig_load in src, "Target signatures not found in CraftServer.java"
+
+          src = src.replace(sig_name, sig_name + "\n        if (true) return \"NewTimeSMP\";", 1)
+          src = src.replace(sig_load, sig_load + "\n        com.newtimesmp.bootstrap.NewTimeSMPBootstrap.init();", 1)
 
           with open(craft_server, "w", encoding="utf-8") as f:
               f.write(src)
