@@ -109,7 +109,7 @@ jobs:
           fi
 
           echo "Injecting 7 NewTimeSMP modules into paper-server..."
-          printf '\ndependencies {\n    runtimeOnly(files(rootProject.file("../dist").listFiles()?.filter { it.extension == "jar" && !it.name.startsWith("NewTimeSMP-1.0.0") } ?: emptyList()))\n}\n' >> paper-server/build.gradle.kts
+          printf '\ndependencies {\n    runtimeOnly(fileTree(rootProject.file("../dist")) { include("*.jar"); exclude("NewTimeSMP-1.0.0*.jar") })\n}\n' >> paper-server/build.gradle.kts
 
           echo "Step 2/2: Building bundled Paperclip Server JAR..."
           if ! ./gradlew createPaperclipJar --no-daemon --max-workers=2 --stacktrace 2>&1 | tee -a /tmp/paper-build.log; then
