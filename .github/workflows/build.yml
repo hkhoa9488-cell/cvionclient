@@ -33,11 +33,17 @@ jobs:
             echo "PROJECT_DIR=$FOUND_DIR" >> "$GITHUB_ENV"
           fi
 
-      - name: Set up JDK 21
+      - name: Set up JDK 21 (for NewTimeSMP modules)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
+
+      - name: Set up JDK 25 (default for Paper 26.2)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
 
       - name: Set up Gradle 8.14.3
         uses: gradle/actions/setup-gradle@v4
@@ -47,13 +53,16 @@ jobs:
       - name: Build & test NewTimeSMP 1.0.0 modules
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          sed -i 's/\r$//' scripts/*.sh
-          chmod +x scripts/*.sh
-          ./scripts/verify-patches.sh
+          if ls scripts/*.sh 1> /dev/null 2>&1; then
+            sed -i 's/\r$//' scripts/*.sh
+            chmod +x scripts/*.sh
+            ./scripts/verify-patches.sh
+          fi
+
           gradle build --no-daemon --stacktrace
 
           mkdir -p dist
-          find newtimesmp-*/build/libs -maxdepth 1 -name "*.jar" ! -name "*-sources.jar" -exec cp {} dist/ \;
+          find newtimesmp-*/build/libs -maxdepth 1 -name "*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" -exec cp {} dist/ \;
 
       - name: Build runnable NewTimeSMP Server JAR (~60MB)
         working-directory: ${{ env.PROJECT_DIR }}
@@ -74,11 +83,23 @@ jobs:
 
           cd .upstream-paper
           chmod +x gradlew
-          ./gradlew applyPatches --no-daemon
-          ./gradlew createMojmapPaperclipJar --no-daemon || ./gradlew createMojmapBundlerJar --no-daemon
+
+          TASKS=$(./gradlew tasks --all --no-daemon)
+          if echo "$TASKS" | grep -q "createMojmapPaperclipJar"; then
+            BUILD_TASK="createMojmapPaperclipJar"
+          elif echo "$TASKS" | grep -q "createMojmapBundlerJar"; then
+            BUILD_TASK="createMojmapBundlerJar"
+          elif echo "$TASKS" | grep -q "createReobfPaperclipJar"; then
+            BUILD_TASK="createReobfPaperclipJar"
+          else
+            BUILD_TASK="createReobfBundlerJar"
+          fi
+
+          echo "Executing Paper build task: $BUILD_TASK"
+          ./gradlew "$BUILD_TASK" --no-daemon --stacktrace
           cd ..
 
-          SERVER_JAR=$(find .upstream-paper -path "*/build/libs/*-paperclip*.jar" -o -path "*/build/libs/*-bundler*.jar" | head -n 1)
+          SERVER_JAR=$(find .upstream-paper -path "*/build/libs/*.jar" \( -name "*paperclip*.jar" -o -name "*bundler*.jar" \) ! -name "*-sources.jar" ! -name "*-javadoc.jar" | head -n 1)
           if [ -z "$SERVER_JAR" ]; then
             echo "Error: Failed to locate Paperclip/Bundler server JAR!"
             find .upstream-paper -path "*/build/libs/*.jar"
@@ -86,6 +107,10 @@ jobs:
           fi
 
           echo "Selected runnable JAR: $SERVER_JAR"
+          if ! unzip -p "$SERVER_JAR" META-INF/MANIFEST.MF | grep -q "Main-Class:"; then
+            echo "Error: Selected JAR does not contain a Main-Class attribute!"
+            exit 1
+          fi
           unzip -p "$SERVER_JAR" META-INF/MANIFEST.MF | grep -E "Main-Class|Bundler-Format"
 
           cp "$SERVER_JAR" "dist/NewTimeSMP-1.0.0-mc26.2.jar"
