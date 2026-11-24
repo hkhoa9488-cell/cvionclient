@@ -122,23 +122,42 @@ jobs:
           fi
 
           echo "Step 2/3: Applying NewTimeSMP custom patches..."
-          find ../patches ../scripts -maxdepth 3 -type f 2>/dev/null || true
           PATCH_FILES=$(find ../patches -type f -name "*.patch" | sort)
           if [ -z "$PATCH_FILES" ]; then
-            echo "Warning: No .patch files found in ../patches!"
-          else
-            for p in $PATCH_FILES; do
-              ABS_PATCH=$(realpath "$p")
-              echo "Applying patch: $p"
-              if grep -qE '^--- a/(paper-server|paper-api)/' "$ABS_PATCH"; then
-                git apply --3way --ignore-whitespace "$ABS_PATCH" || patch -p1 --batch --forward < "$ABS_PATCH"
-              elif grep -qE '^--- a/src/' "$ABS_PATCH"; then
-                (cd paper-server && (git apply --3way --ignore-whitespace "$ABS_PATCH" || patch -p1 --batch --forward < "$ABS_PATCH"))
-              else
-                git apply --3way --ignore-whitespace "$ABS_PATCH" || patch -p1 --batch --forward < "$ABS_PATCH"
+            echo "Error: No .patch files found in ../patches!"
+            exit 1
+          fi
+
+          for p in $PATCH_FILES; do
+            ABS_PATCH=$(realpath "$p")
+            echo "Applying patch: $p"
+            APPLIED=false
+            for dir in "" "paper-server" "paper-server/src/minecraft/java" "paper-server/src/main/java" "paper-api/src/main/java"; do
+              if [ -z "$dir" ]; then
+                if git apply --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
+                  git apply --3way --ignore-whitespace "$ABS_PATCH"
+                  APPLIED=true
+                  echo " -> Applied at repository root"
+                  break
+                fi
+              elif [ -d "$dir" ]; then
+                if git apply --directory="$dir" --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
+                  git apply --directory="$dir" --3way --ignore-whitespace "$ABS_PATCH"
+                  APPLIED=true
+                  echo " -> Applied into $dir"
+                  break
+                fi
               fi
             done
-          fi
+
+            if [ "$APPLIED" = false ]; then
+              echo "================ PATCH APPLY FAILURE ================"
+              echo "Failed to apply patch: $p"
+              head -n 25 "$ABS_PATCH"
+              git apply --check --ignore-whitespace "$ABS_PATCH" || true
+              exit 1
+            fi
+          done
 
           echo "Injecting 7 NewTimeSMP modules via local Maven..."
           printf '\nrepositories {\n    maven { url = uri(file("${rootProject.projectDir}/../.local-maven")) }\n}\ndependencies {\n%b}\n' "$DEPS_KTS" >> paper-server/build.gradle.kts
