@@ -98,7 +98,6 @@ jobs:
           cd .upstream-paper
           chmod +x gradlew
 
-          # Cấp 4GB RAM cho quá trình giải mã Minecraft (Vineflower) và biên dịch paper-server
           cat << 'EOF' >> gradle.properties
 
           org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=1G -XX:+UseG1GC
@@ -108,7 +107,7 @@ jobs:
           EOF
 
           echo "Applying Paper patches & building Paperclip JAR..."
-          if ! ./gradlew applyAllPatches createPaperclipJar --no-daemon --max-workers=2 --stacktrace 2>&1 | tee /tmp/paper-build.log; then
+          if ! ./gradlew applyPatches createPaperclipJar --no-daemon --max-workers=2 --stacktrace 2>&1 | tee /tmp/paper-build.log; then
             echo "================ EXACT FAILURE REASON ================"
             grep -B 15 -A 10 "FAILURE: Build failed with an exception." /tmp/paper-build.log || tail -n 80 /tmp/paper-build.log
             exit 1
@@ -145,7 +144,7 @@ jobs:
 
           JAR_SIZE=$(stat -c%s "$SERVER_JAR")
           if [ "$JAR_SIZE" -lt 35000000 ]; then
-            echo "Error: Server JAR is too small ($JAR_SIZE bytes), expected greater than 35MB Paperclip/Bundler JAR!"
+            echo "Error: Server JAR is too small ($JAR_SIZE bytes), expected more than 35MB Paperclip/Bundler JAR!"
             exit 1
           fi
 
