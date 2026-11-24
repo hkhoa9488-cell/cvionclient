@@ -68,6 +68,8 @@ jobs:
       - name: Build runnable NewTimeSMP Server JAR (~60MB)
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
+          set -o pipefail
+
           if [ -n "$JAVA_HOME_25_X64" ]; then
             export JAVA_HOME="$JAVA_HOME_25_X64"
           else
@@ -96,21 +98,21 @@ jobs:
           cd .upstream-paper
           chmod +x gradlew
 
-          TASKS=$(./gradlew tasks --all --no-daemon)
-          if echo "$TASKS" | grep -qE '(^|:)createPaperclipJar\b'; then
-            BUILD_TASK="createPaperclipJar"
-          elif echo "$TASKS" | grep -qE '(^|:)createBundlerJar\b'; then
-            BUILD_TASK="createBundlerJar"
-          else
-            BUILD_TASK=$(echo "$TASKS" | grep -oE '[a-zA-Z0-9:_-]*(PaperclipJar|BundlerJar)' | head -n 1)
-          fi
+          # Giới hạn RAM cho Gradle Daemon để nhường bộ nhớ cho javac biên dịch paper-server
+          cat << 'EOF' >> gradle.properties
 
-          if [ -z "$BUILD_TASK" ]; then
-            BUILD_TASK="createPaperclipJar"
-          fi
+          org.gradle.jvmargs=-Xmx2G -XX:MaxMetaspaceSize=512m -XX:+UseG1GC
+          org.gradle.daemon=false
+          org.gradle.parallel=false
+          org.gradle.workers.max=2
+          EOF
 
-          echo "Executing Paper build task: $BUILD_TASK"
-          ./gradlew "$BUILD_TASK" --no-daemon --stacktrace
+          echo "Executing Paper build task: createPaperclipJar"
+          if ! ./gradlew createPaperclipJar --no-daemon --max-workers=2 --stacktrace 2>&1 | tee /tmp/paper-build.log; then
+            echo "================ LAST 60 LINES OF ERROR LOG ================"
+            tail -n 60 /tmp/paper-build.log
+            exit 1
+          fi
           cd ..
 
           SERVER_JAR=""
