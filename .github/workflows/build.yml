@@ -66,13 +66,6 @@ jobs:
           find newtimesmp-*/build/libs -maxdepth 1 -name "*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" -exec cp {} dist/ \;
           ls -lh dist/
 
-          echo "=== Inspecting 7 NewTimeSMP Module Contents ==="
-          for jar in dist/newtimesmp-*.jar; do
-            [ -f "$jar" ] || continue
-            echo "--- $jar ---"
-            unzip -l "$jar" | grep -E "plugin\.yml|paper-plugin\.yml|MANIFEST\.MF|\.class$" || true
-          done
-
       - name: Build runnable NewTimeSMP Server JAR (~60MB)
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -128,24 +121,7 @@ jobs:
             exit 1
           fi
 
-          echo "Step 2/3: Applying custom patches & injecting NewTimeSMP Bootstrap hook..."
-          PATCH_FILES=$(find ../patches -type f \( -name "*.patch" -o -name "*.diff" \) 2>/dev/null | sort)
-          if [ -n "$PATCH_FILES" ]; then
-            for p in $PATCH_FILES; do
-              ABS_PATCH=$(realpath "$p")
-              echo "Applying patch: $p"
-              for dir in "" "paper-server" "paper-server/src/minecraft/java" "paper-server/src/main/java" "paper-api/src/main/java"; do
-                if [ -z "$dir" ] && git apply --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
-                  git apply --3way --ignore-whitespace "$ABS_PATCH"
-                  break
-                elif [ -n "$dir" ] && [ -d "$dir" ] && git apply --directory="$dir" --check --ignore-whitespace "$ABS_PATCH" 2>/dev/null; then
-                  git apply --directory="$dir" --3way --ignore-whitespace "$ABS_PATCH"
-                  break
-                fi
-              done
-            done
-          fi
-
+          echo "Step 2/3: Injecting NewTimeSMP Bootstrap hook..."
           python3 -c '
           import glob, os, re, zipfile
 
@@ -211,9 +187,9 @@ jobs:
           with open(craft_server, "r", encoding="utf-8") as f:
               src = f.read()
 
-          src = src.replace("private final String serverName = \"Paper\";", "private final String serverName = \"NewTimeSMP\";")
-          src, count = re.subn(r"(public\s+void\s+loadPlugins\s*\(\s*\)\s*\{)", r"\1\n        com.newtimesmp.bootstrap.NewTimeSMPBootstrap.init();", src, count=1)
-          assert count == 1, "Failed to hook CraftServer.loadPlugins()"
+          src, name_count = re.subn(r"(public\s+String\s+getName\s*\(\s*\)\s*\{)", r"\1\n        if (true) return \"NewTimeSMP\";", src, count=1)
+          src, hook_count = re.subn(r"(public\s+void\s+loadPlugins\s*\(\s*\)\s*\{)", r"\1\n        com.newtimesmp.bootstrap.NewTimeSMPBootstrap.init();", src, count=1)
+          assert name_count == 1 and hook_count == 1, f"Hook failed: name={name_count}, hook={hook_count}"
 
           with open(craft_server, "w", encoding="utf-8") as f:
               f.write(src)
